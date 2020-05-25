@@ -2,67 +2,50 @@
 
 namespace driver_csharp
 {
-	public interface State
-	{
-		State apply(bool level, long tick);
-	}
+	public interface State {}
 
-	public class InitState : State
-	{
-		public InitState()
-		{
-			Console.WriteLine("new InitState");
-		}
-		public State apply(bool level, long tick)
-		{
-			return new IntervalState(tick);
-		}
-	}
+	public sealed class InitState : State {}
 
-	public class IntervalState : State
+	public sealed class IntervalState : State
 	{
-		public IntervalState(long tick) 
+		public IntervalState(long tick)
 		{
-			Console.WriteLine("new IntervalState @ " + tick);
 			StartTick = tick;
 		}
-		private long StartTick { get; }
-		public State apply(bool level, long tick)
-		{
-			return new DataState(tick - StartTick, tick, 11, true, 0);
-		}
+		public long StartTick { get; }
 	}
 
-	public class DataState : State
+	public sealed class DataState : State
 	{
-		public DataState(long interval, long startTick, int remaining, bool ignoreFirst, int value) 
+		public DataState(long interval, long startTick, int remaining, bool ignoreFirst, int value)
 		{
-			Console.WriteLine("new DataState @ " + startTick + " with " + remaining);
-
 			Interval = interval;
 			StartTick = startTick;
 			Remaining = remaining;
 			IgnoreFirst = ignoreFirst;
 			Value = value;
 		}
-		private long Interval { get; }
-		private long StartTick { get; }
-		private int Remaining { get; }
-		private bool IgnoreFirst { get; }
-		private int Value { get; }
+		public long Interval { get; }
+		public long StartTick { get; }
+		public int Remaining { get; }
+		public bool IgnoreFirst { get; }
+		public int Value { get; }
+	}
 
-		private int countBits(long tick)
+	public static class Transmission
+	{
+		public static int countBits(long startTick, long tick, long interval)
 		{
-			int numBits = Convert.ToInt32((tick - StartTick) / Interval);
+			int numBits = Convert.ToInt32((tick - startTick) / interval);
 
-			if ((tick - StartTick) % Interval > Interval /5*4)
+			if ((tick - startTick) % interval > interval /5*4)
 			{
 				++numBits;
 			}
 			return numBits;
 		}
 
-		private int bitsToValue(int remaining, int numBits, int startValue)
+		public static int bitsToValue(int remaining, int numBits, int startValue)
 		{
 			if (remaining <= 0 || numBits <= 0)
 			{
@@ -74,20 +57,32 @@ namespace driver_csharp
 			}
 		}
 
-		public State apply(bool level, long tick)
+		public static State levelChange(this State currentState, bool level, long tick)
 		{
-			int numBits = countBits(tick);
-			int newValue = level ? Value : bitsToValue(
-				IgnoreFirst ? Remaining-1 : Remaining, IgnoreFirst ? numBits -1 : numBits, Value);
+			switch (currentState)
+			{
+				case InitState s:
+					return new IntervalState(tick);
+				case IntervalState s:
+					return new DataState(tick - s.StartTick, tick, 11, true, 0);
+				case DataState s:
+					int numBits = countBits(s.StartTick, tick, s.Interval);
+					int newValue = level ? s.Value : bitsToValue(
+						s.IgnoreFirst ? s.Remaining-1 : s.Remaining, s.IgnoreFirst ? numBits -1 : numBits, s.Value);
 
-			if (numBits < Remaining)
-			{
-				return new DataState(Interval, tick, Remaining - numBits, false, newValue);
-			}
-			else
-			{
-				Console.WriteLine(newValue);
-				return new InitState();
+					if (numBits < s.Remaining)
+					{
+						return new DataState(s.Interval, tick, s.Remaining - numBits, false, newValue);
+					}
+					else
+					{
+						Console.WriteLine(newValue);
+						return new InitState();
+					}
+				default:
+					throw new ArgumentException(
+						message: "currentState is not a recognized state",
+						paramName: nameof(currentState));
 			}
 		}
 	}
@@ -97,17 +92,17 @@ namespace driver_csharp
 		static void Main(string[] args)
 		{
 			State state = new InitState();
-			state.apply(false, 0)
-				.apply(true, 10)
-				.apply(false, 30)
-				.apply(true, 110)
-				.apply(false, 120); // 513
+			state.levelChange(false, 0)
+				.levelChange(true, 10)
+				.levelChange(false, 30)
+				.levelChange(true, 110)
+				.levelChange(false, 120); // 513
 
 			State state2 = new InitState();
-			state2.apply(true, 0)
-				.apply(false, 10)
-				.apply(true, 110)
-				.apply(false, 120); // 1
+			state.levelChange(true, 0)
+				.levelChange(false, 10)
+				.levelChange(true, 110)
+				.levelChange(false, 120); // 1
 		}
 	}
 }
