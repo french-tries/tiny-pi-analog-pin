@@ -29,72 +29,26 @@ namespace driver_csharp
 		private long StartTick { get; }
 		public State apply(bool level, long tick)
 		{
-			return new DumpState(tick - StartTick, tick);
-		}
-	}
-
-	public class DumpState : State
-	{
-		public DumpState(long interval, long tick) 
-		{
-			Console.WriteLine("new DumpState @ " + tick);
-			Interval = interval;
-			StartTick = tick;
-		}
-		private long Interval { get; }
-		private long StartTick { get; }
-		private int countBits(long tick)
-		{
-			int numBits = Convert.ToInt32((tick - StartTick) / Interval);
-
-			if ((tick - StartTick) % Interval > Interval /5*4)
-			{
-				++numBits;
-			}
-			return numBits;
-		}
-		private int bitsToValue(int remaining, int numBits, int startValue)
-		{
-			if (remaining <= 0 || numBits <= 0)
-			{
-				return startValue;
-			}
-			else
-			{
-				return bitsToValue(remaining-1, numBits-1, startValue | 1 << (remaining-1));
-			}
-		}
-
-		public State apply(bool level, long tick)
-		{
-			int numBits = countBits(tick);
-
-			if (numBits <= 10)
-			{
-				return new DataState(Interval, tick, 11 - numBits, !level ? bitsToValue(10, numBits-1, 0) : 0);
-			}
-			else
-			{
-				Console.WriteLine(!level ? bitsToValue(10, numBits, 0) : 0);
-				return new InitState();
-			}
+			return new DataState(tick - StartTick, tick, 11, true, 0);
 		}
 	}
 
 	public class DataState : State
 	{
-		public DataState(long interval, long startTick, int remaining, int value) 
+		public DataState(long interval, long startTick, int remaining, bool ignoreFirst, int value) 
 		{
 			Console.WriteLine("new DataState @ " + startTick + " with " + remaining);
 
 			Interval = interval;
 			StartTick = startTick;
 			Remaining = remaining;
+			IgnoreFirst = ignoreFirst;
 			Value = value;
 		}
 		private long Interval { get; }
 		private long StartTick { get; }
 		private int Remaining { get; }
+		private bool IgnoreFirst { get; }
 		private int Value { get; }
 
 		private int countBits(long tick)
@@ -123,14 +77,16 @@ namespace driver_csharp
 		public State apply(bool level, long tick)
 		{
 			int numBits = countBits(tick);
+			int newValue = level ? Value : bitsToValue(
+				IgnoreFirst ? Remaining-1 : Remaining, IgnoreFirst ? numBits -1 : numBits, Value);
 
 			if (numBits < Remaining)
 			{
-				return new DataState(Interval, tick, Remaining - numBits, !level ? bitsToValue(Remaining, numBits, Value) : Value);
+				return new DataState(Interval, tick, Remaining - numBits, false, newValue);
 			}
 			else
 			{
-				Console.WriteLine(!level ? bitsToValue(Remaining, numBits, Value) : Value);
+				Console.WriteLine(newValue);
 				return new InitState();
 			}
 		}
