@@ -34,51 +34,61 @@ namespace driver_csharp
 
 	public static class Transmission
 	{
-		public static int countBits(long startTick, long tick, long interval)
+		public static int countBits(DataState s, long tick)
 		{
-			int numBits = Convert.ToInt32((tick - startTick) / interval);
+			int numBits = Convert.ToInt32((tick - s.StartTick) / s.Interval);
 
-			if ((tick - startTick) % interval > interval /5*4)
+			if ((tick - s.StartTick) % s.Interval > s.Interval /5*4)
 			{
 				++numBits;
 			}
 			return numBits;
 		}
 
-		public static int bitsToValue(int remaining, int numBits, int startValue)
+		public static State bitsToState(DataState s, bool level, int numBits)
 		{
-			if (remaining <= 0 || numBits <= 0)
+			if (s.Remaining <= 0)
 			{
-				return startValue;
+				Console.WriteLine(s.Value);
+				return new InitState();
 			}
-			else
+			if (numBits <= 0)
 			{
-				return bitsToValue(remaining-1, numBits-1, startValue | 1 << (remaining-1));
+				return s;
 			}
+			if (s.IgnoreFirst)
+			{
+				return bitsToState(
+					new DataState(s.Interval, s.StartTick, s.Remaining-1, false, s.Value),
+					level, numBits-1);
+			}
+			return bitsToState(
+				new DataState(s.Interval, s.StartTick, s.Remaining-1, false, s.Value | (level ? 0 : 1) << (s.Remaining-1)),
+				level, numBits-1);
 		}
+
+		public delegate State StateDelegate(bool level, long tick); 
+
+		public static StateDelegate onInitTick(this InitState s) =>
+			(bool level, long tick) =>  new IntervalState(tick);
+
+		public static StateDelegate onIntervalTick(this IntervalState s) =>
+			(bool level, long tick) => new DataState(tick - s.StartTick, tick, 11, true, 0);
+
+		public static StateDelegate onDataTick(this DataState s) =>
+			(bool level, long tick) => bitsToState(
+				new DataState(s.Interval, tick, s.Remaining, s.IgnoreFirst, s.Value), level, countBits(s, tick));
 
 		public static State levelChange(this State currentState, bool level, long tick)
 		{
 			switch (currentState)
 			{
 				case InitState s:
-					return new IntervalState(tick);
+					return onInitTick(s)(level, tick);
 				case IntervalState s:
-					return new DataState(tick - s.StartTick, tick, 11, true, 0);
+					return onIntervalTick(s)(level, tick);
 				case DataState s:
-					int numBits = countBits(s.StartTick, tick, s.Interval);
-					int newValue = level ? s.Value : bitsToValue(
-						s.IgnoreFirst ? s.Remaining-1 : s.Remaining, s.IgnoreFirst ? numBits -1 : numBits, s.Value);
-
-					if (numBits < s.Remaining)
-					{
-						return new DataState(s.Interval, tick, s.Remaining - numBits, false, newValue);
-					}
-					else
-					{
-						Console.WriteLine(newValue);
-						return new InitState();
-					}
+					return onDataTick(s)(level, tick);
 				default:
 					throw new ArgumentException(
 						message: "currentState is not a recognized state",
