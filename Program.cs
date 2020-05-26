@@ -1,9 +1,13 @@
 ﻿using System;
 
-// try smaller declarative methods, rollover, do stuff with result
+// rollover
 
 namespace driver_csharp
 {
+	public static class Config
+	{
+		public const int MessageBits = 10;
+	}
 	public interface State
 	{
 		State levelChange(bool level, long tick);
@@ -24,7 +28,7 @@ namespace driver_csharp
 		public long StartTick { get; }
 
 		public State levelChange(bool level, long tick) => 
-			new DataState(tick - StartTick, tick, 11, true, 0);
+			new DataState(tick - StartTick, tick, Config.MessageBits, true, 0);
 	}
 
 	public sealed class DataState : State
@@ -48,44 +52,42 @@ namespace driver_csharp
 			int numBits = Convert.ToInt32((tick - StartTick) / Interval);
 
 			if ((tick - StartTick) % Interval > Interval /5*4)
-			{
 				++numBits;
-			}
+			if (IgnoreFirst)
+				--numBits;
+
 			return numBits;
 		}
 
-		public State bitsToState(bool level, int numBits)
+		public DataState updateTimestamp(long tick) => 
+			new DataState(Interval, tick, Remaining, IgnoreFirst, Value);
+		public DataState transmitValue() {
+			Console.WriteLine(Value);
+			return this;
+		}
+		public InitState reinit() => new InitState();
+
+		public DataState updateValue(int numBits) 
 		{
-			if (Remaining <= 0)
-			{
-				Console.WriteLine(Value);
-				return new InitState();
-			}
-			if (numBits <= 0)
-			{
+			if (numBits <= 0 || Remaining <= 0)
 				return this;
-			}
-			if (IgnoreFirst)
-			{
-				return new DataState(Interval, StartTick, Remaining-1, false, Value).bitsToState(level, numBits-1);
-			}
-			return new DataState(Interval, StartTick, Remaining-1, false, Value | (level ? 0 : 1) << (Remaining-1)).bitsToState(level, numBits-1);
+
+			return new DataState(Interval, StartTick, Remaining-1, false, Value | 1 << (Remaining-1)).updateValue(numBits-1);
 		}
 
-		public State levelChange(bool level, long tick) =>
-			new DataState(Interval, tick, Remaining, IgnoreFirst, Value).bitsToState(level, countBits(tick));
-	}
+		public DataState shiftRemaining(int numBits) => new DataState(Interval, StartTick, Remaining-numBits, false, Value);
 
-	public static class Transmission
-	{
-		public static DataState updateValue(this DataState s, long numBits) => s;
-		public static DataState updateTimestamp(this DataState s, long tick) => 
-			new DataState(s.Interval, tick,s.Remaining, s.IgnoreFirst, s.Value);
-		public static DataState transmitValue(this DataState s) {
-			Console.WriteLine(s.Value);
-			return s;
+		public State levelChange(bool level, long tick)
+		{
+			var newState = level ?
+				updateTimestamp(tick).shiftRemaining(countBits(tick)) :
+				updateTimestamp(tick).updateValue(countBits(tick));
+
+			if(newState.Remaining <= 0)
+				return newState.transmitValue().reinit();
+			else
+				return newState;
 		}
-		public static InitState reinit(this DataState s) => new InitState();
 	}
 
 	class Program
