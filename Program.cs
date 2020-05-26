@@ -67,28 +67,26 @@ namespace driver_csharp
 				level, numBits-1);
 		}
 
-		public delegate State StateDelegate(bool level, long tick); 
+		public static State levelChange(this InitState state, bool level, long tick) => 
+			new IntervalState(tick);
 
-		public static StateDelegate onInitTick(this InitState s) =>
-			(bool level, long tick) =>  new IntervalState(tick);
+		public static State levelChange(this IntervalState s, bool level, long tick) => 
+			new DataState(tick - s.StartTick, tick, 11, true, 0);
 
-		public static StateDelegate onIntervalTick(this IntervalState s) =>
-			(bool level, long tick) => new DataState(tick - s.StartTick, tick, 11, true, 0);
-
-		public static StateDelegate onDataTick(this DataState s) =>
-			(bool level, long tick) => bitsToState(
+		public static State levelChange(this DataState s, bool level, long tick) => bitsToState(
 				new DataState(s.Interval, tick, s.Remaining, s.IgnoreFirst, s.Value), level, countBits(s, tick));
 
+		// looks like poor man's polymorphism...
 		public static State levelChange(this State currentState, bool level, long tick)
 		{
 			switch (currentState)
 			{
 				case InitState s:
-					return onInitTick(s)(level, tick);
+					return levelChange(s, level, tick);
 				case IntervalState s:
-					return onIntervalTick(s)(level, tick);
+					return levelChange(s, level, tick);
 				case DataState s:
-					return onDataTick(s)(level, tick);
+					return levelChange(s, level, tick);
 				default:
 					throw new ArgumentException(
 						message: "currentState is not a recognized state",
