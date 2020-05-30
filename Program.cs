@@ -1,8 +1,6 @@
 ﻿using System;
 
-
-// skip state
-// multiple communications
+// single result
 
 namespace driver_csharp
 {
@@ -21,15 +19,25 @@ namespace driver_csharp
 		public abstract State levelChange(bool rising, long tick);
 	}
 
-	public sealed class InitState : State
+	public sealed class TriggerState : State
 	{
-		public InitState(Func<State, bool, long, State> onSuccess) {
+		public TriggerState(Func<State, bool, long, State> onSuccess, int id = 0) : base(id) {
 			OnSuccess = onSuccess;
 		}
 
 		private Func<State, bool, long, State> OnSuccess { get; }
 		public override State levelChange(bool rising, long tick) => 
 			OnSuccess(this, rising, tick);
+	}
+
+	public sealed class ErrorState : State
+	{
+		public ErrorState(Func<State, bool, long, State> onSuccess, int id = 0) : base(id) {
+			OnSuccess = onSuccess;
+		}
+
+		private Func<State, bool, long, State> OnSuccess { get; }
+		public override State levelChange(bool rising, long tick) => this;
 	}
 
 	public sealed class IntervalState : State
@@ -114,26 +122,28 @@ namespace driver_csharp
 
 	class Program
 	{
-		static Func<State, bool, long, State> transitions = (State s, bool rising, long tick) => {
+		static Func<long?, Func<State, bool, long, State>> transitions = (long? interval) => (State s, bool rising, long tick) => {
 			switch (s){
-				case InitState i:
-					return new IntervalState(transitions, tick);
+				case TriggerState t when t.Id == 0:
+					return new IntervalState(transitions(interval), tick);
 				case IntervalState i:
-					return new DataState(transitions, 0, i.getInterval(tick), tick, Config.IdBits);
+					return new DataState(transitions(i.getInterval(tick)), 0, i.getInterval(tick), tick, Config.IdBits);
 				case DataState d when d.Id == 0:
 					Console.WriteLine(d.Value);
-					return new DataState(transitions, 1, d.Interval, d.StartTick, Config.MessageBits, false, 0).levelChange(rising, tick);
+					return new DataState(transitions(interval), 1, d.Interval, d.StartTick, Config.MessageBits, false, 0).levelChange(rising, tick);
 				case DataState d when d.Id == 1:
 					Console.WriteLine(d.Value);
-					return new InitState(transitions);
+					return new TriggerState(transitions(interval));
+				case ErrorState e:
+					return e;
 				default:
 					Console.WriteLine("error");
-					return new InitState(transitions);
+					return new TriggerState(transitions(interval));
 			}
 		};
 		static void Main(string[] args)
 		{
-			State state = new InitState(transitions);
+			State state = new TriggerState(transitions(null));
 			state.levelChange(false, 0)
 				.levelChange(true, 10) // interval
 				.levelChange(false, 20)
@@ -142,17 +152,20 @@ namespace driver_csharp
 				.levelChange(true, 130)
 				.levelChange(false, 140); // 1
 
-			State state2 = new InitState(transitions);
+			State state2 = new TriggerState(transitions(null));
 			state2.levelChange(true, 0)
 				.levelChange(false, 10) //interval
 				.levelChange(true, 130)	// 0
 				.levelChange(false, 140); // 1
 
-			State state3 = new InitState(transitions);
+			State state3 = new TriggerState(transitions(null));
 			state3.levelChange(false, 0)
 				.levelChange(true, 10) //interval
-				.levelChange(false, 140)	// 3
-				.levelChange(true, 150); // 1023
+				.levelChange(false, 140) // 3 + 1023
+				.levelChange(true, 200)
+				.levelChange(false, 210)
+				.levelChange(true, 330) // 0
+				.levelChange(false, 340); // 1
 		}
 	}
 }
