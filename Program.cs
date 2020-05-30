@@ -1,7 +1,5 @@
 ﻿using System;
 
-// single result
-
 namespace driver_csharp
 {
 	public static class Config
@@ -122,28 +120,33 @@ namespace driver_csharp
 
 	class Program
 	{
-		static Func<long?, Func<State, bool, long, State>> transitions = (long? interval) => (State s, bool rising, long tick) => {
+		static Action<int?, int?> printMessage = (int? id, int? value) => Console.WriteLine($"{id} : {value}");
+
+		static Func<Action<int?, int?>, int?, Func<State, bool, long, State>> transitions = 
+			(Action<int?, int?> onMessage, int? id) => (State s, bool rising, long tick) =>
+		{
 			switch (s){
 				case TriggerState t when t.Id == 0:
-					return new IntervalState(transitions(interval), tick);
+					return new IntervalState(transitions(onMessage, null), tick);
 				case IntervalState i:
-					return new DataState(transitions(i.getInterval(tick)), 0, i.getInterval(tick), tick, Config.IdBits);
+					return new DataState(transitions(onMessage, null),
+						0, i.getInterval(tick), tick, Config.IdBits);
 				case DataState d when d.Id == 0:
-					Console.WriteLine(d.Value);
-					return new DataState(transitions(interval), 1, d.Interval, d.StartTick, Config.MessageBits, false, 0).levelChange(rising, tick);
+					return new DataState(transitions(onMessage, d.Value),
+						1, d.Interval, d.StartTick, Config.MessageBits, false, 0).levelChange(rising, tick);
 				case DataState d when d.Id == 1:
-					Console.WriteLine(d.Value);
-					return new TriggerState(transitions(interval));
+					onMessage(id, d.Value);
+					return new TriggerState(transitions(onMessage, null));
 				case ErrorState e:
 					return e;
 				default:
 					Console.WriteLine("error");
-					return new TriggerState(transitions(interval));
+					return new TriggerState(transitions(onMessage, null));
 			}
 		};
 		static void Main(string[] args)
 		{
-			State state = new TriggerState(transitions(null));
+			State state = new TriggerState(transitions(printMessage, null));
 			state.levelChange(false, 0)
 				.levelChange(true, 10) // interval
 				.levelChange(false, 20)
@@ -152,13 +155,13 @@ namespace driver_csharp
 				.levelChange(true, 130)
 				.levelChange(false, 140); // 1
 
-			State state2 = new TriggerState(transitions(null));
+			State state2 = new TriggerState(transitions(printMessage, null));
 			state2.levelChange(true, 0)
 				.levelChange(false, 10) //interval
 				.levelChange(true, 130)	// 0
 				.levelChange(false, 140); // 1
 
-			State state3 = new TriggerState(transitions(null));
+			State state3 = new TriggerState(transitions(printMessage, null));
 			state3.levelChange(false, 0)
 				.levelChange(true, 10) //interval
 				.levelChange(false, 140) // 3 + 1023
