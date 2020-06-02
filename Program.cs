@@ -1,46 +1,47 @@
 ﻿using System;
+using System.Collections.Immutable;
+
+// interface class
+// testing
+// use concrete gpio
+// use all possible tiny pins
+// ask for value
+// parity
+// error state when data changes at the wrong time
+// reset after error
+// version with fixed clock rate to see how simpler it would be
 
 namespace driver_csharp
 {
-	public static class Config
+	public interface State
 	{
-		public const int IdBits = 2;
-		public const int MessageBits = 10;
-	}
-	public abstract class State
-	{
-		protected State(int id = 0) {
-			Id = id;
-		}
-
-		public int Id { get; }
-		public abstract State levelChange(bool rising, long tick);
+		State levelChange(bool rising, long tick);
 	}
 
 	public sealed class TriggerState : State
 	{
-		public TriggerState(Func<State, bool, long, State> onSuccess, int id = 0) : base(id) {
+		public TriggerState(Func<State, bool, long, State> onSuccess, int id = 0) {
 			OnSuccess = onSuccess;
 		}
 
 		private Func<State, bool, long, State> OnSuccess { get; }
-		public override State levelChange(bool rising, long tick) => 
+		public State levelChange(bool rising, long tick) => 
 			OnSuccess(this, rising, tick);
 	}
 
 	public sealed class ErrorState : State
 	{
-		public ErrorState(Func<State, bool, long, State> onSuccess, int id = 0) : base(id) {
+		public ErrorState(Func<State, bool, long, State> onSuccess, int id = 0) {
 			OnSuccess = onSuccess;
 		}
 
 		private Func<State, bool, long, State> OnSuccess { get; }
-		public override State levelChange(bool rising, long tick) => this;
+		public State levelChange(bool rising, long tick) => this;
 	}
 
 	public sealed class IntervalState : State
 	{
-		public IntervalState(Func<State, bool, long, State> onSuccess, long tick) : base()
+		public IntervalState(Func<State, bool, long, State> onSuccess, long tick)
 		{
 			OnSuccess = onSuccess;
 			StartTick = tick;
@@ -51,18 +52,18 @@ namespace driver_csharp
 
 		public long getInterval(long tick) => tick - StartTick;
 
-		public override State levelChange(bool rising, long tick) => 
+		public State levelChange(bool rising, long tick) => 
 			OnSuccess(this, rising, tick);
 	}
 
 	public sealed class DataState : State
 	{
 		public DataState(Func<State, bool, long, State> onSuccess, 
-			int id, long interval, long startTick, int remaining) : 
-			this(onSuccess, id, interval, startTick, remaining, true, 0)
+			long interval, long startTick, int remaining) : 
+			this(onSuccess, interval, startTick, remaining, false, 0)
 		{}
-		public DataState(Func<State, bool, long, State> onSuccess, int id,
-			long interval, long startTick, int remaining, bool ignoreFirst, int value)  : base(id)
+		public DataState(Func<State, bool, long, State> onSuccess,
+			long interval, long startTick, int remaining, bool ignoreFirst, int value)
 		{
 			OnSuccess = onSuccess;
 			Interval = interval;
@@ -74,7 +75,7 @@ namespace driver_csharp
 
 		public DataState With(long? startTick = null,
 			int? remaining = null, bool? ignoreFirst = null, int? value = null) =>
-			new DataState(OnSuccess, Id, Interval, 
+			new DataState(OnSuccess, Interval, 
 				startTick ?? StartTick, remaining ?? Remaining, false, value ?? Value);
 
 		private Func<State, bool, long, State> OnSuccess { get; }
@@ -107,7 +108,7 @@ namespace driver_csharp
 			return this;
 		}
 
-		public override State levelChange(bool rising, long tick)
+		public State levelChange(bool rising, long tick)
 		{
 			var newState = processBits(rising, tick);
 
@@ -118,35 +119,88 @@ namespace driver_csharp
 		}
 	}
 
-	class Program
+	public sealed class ListeningTransmission
 	{
-		static Action<int?, int?> printMessage = (int? id, int? value) => Console.WriteLine($"{id} : {value}");
-
-		static Func<Action<int?, int?>, int?, Func<State, bool, long, State>> transitions = 
-			(Action<int?, int?> onMessage, int? id) => (State s, bool rising, long tick) =>
+		public static Func<ListeningTransmission, Func<State, bool, long, State>> transitions = 
+			(ListeningTransmission transmission) => (State s, bool rising, long tick) =>
 		{
 			switch (s){
-				case TriggerState t when t.Id == 0:
-					return new IntervalState(transitions(onMessage, null), tick);
-				case IntervalState i:
-					return new DataState(transitions(onMessage, null),
-						0, i.getInterval(tick), tick, Config.IdBits);
-				case DataState d when d.Id == 0:
-					return new DataState(transitions(onMessage, d.Value),
-						1, d.Interval, d.StartTick, Config.MessageBits, false, 0).levelChange(rising, tick);
-				case DataState d when d.Id == 1:
-					onMessage(id, d.Value);
-					return new TriggerState(transitions(onMessage, null));
-				case ErrorState e:
+				case TriggerState t: {
+					return new IntervalState(transitions(transmission), tick);
+				}
+				case IntervalState i: {
+					(ListeningTransmission next, int count) = transmission.popRemaining();
+					return new DataState(transitions(next), i.getInterval(tick), tick, count, true, 0);
+				}
+				case DataState d when !transmission.isDone(): {
+					(ListeningTransmission next, int count) = transmission.popRemaining();
+					return new DataState(transitions(next.addValue(d.Value)),
+						d.Interval, d.StartTick, count).levelChange(rising, tick);
+				}
+				case DataState d when transmission.isDone(): {
+					return new TriggerState(transitions(transmission.addValue(d.Value).finish(d.Value)));
+				}
+				case ErrorState e: {
 					return e;
-				default:
+				}
+				default: {
 					Console.WriteLine("error");
-					return new TriggerState(transitions(onMessage, null));
+					return new TriggerState(transitions(transmission.reset()));
+				}
 			}
 		};
+
+		public ListeningTransmission(Action<ImmutableList<int>> onMessage) : 
+			this(onMessage, ImmutableList.Create<int>(), ImmutableList.Create<int>(), ImmutableList.Create<int>())
+		{}
+
+		private ListeningTransmission(Action<ImmutableList<int>> onMessage, ImmutableList<int> entries,
+			ImmutableList<int> remaining, ImmutableList<int> values)
+		{
+			OnMessage = onMessage;
+			Entries = entries;
+			Remaining = remaining;
+			Values = values;
+		}
+
+		public ListeningTransmission addData(int numbits) => 
+			new ListeningTransmission(OnMessage, Entries.Add(numbits), Entries.Add(numbits), Values);
+
+		public State start() =>  new TriggerState(transitions(this));
+
+		private (ListeningTransmission, int) popRemaining() => 
+			(new ListeningTransmission(OnMessage, Entries, Remaining.RemoveAt(0), Values), Remaining[0]);
+
+		private ListeningTransmission addValue(int value) =>
+			new ListeningTransmission(OnMessage, Entries, Remaining, Values.Add(value));
+
+		private ListeningTransmission finish(int lastValue) {
+			OnMessage(Values.Add(lastValue));
+			return reset();
+		}
+
+		private bool isDone() => Remaining.IsEmpty;
+
+		public ListeningTransmission reset() =>
+			new ListeningTransmission(OnMessage, Entries, Entries, ImmutableList.Create<int>());
+
+		private Action<ImmutableList<int>> OnMessage { get; }
+		private ImmutableList<int> Entries { get; }
+		private ImmutableList<int> Remaining { get; }
+		private ImmutableList<int> Values { get; }
+	}
+
+	class Program
+	{
+		static Action<ImmutableList<int>> printMessage = (ImmutableList<int> values) => 
+			Console.WriteLine($"{values[0]} : {values[1]}");
+
 		static void Main(string[] args)
 		{
-			State state = new TriggerState(transitions(printMessage, null));
+			ListeningTransmission transmission =
+				new ListeningTransmission(printMessage).addData(2).addData(10);
+
+			State state = transmission.start();
 			state.levelChange(false, 0)
 				.levelChange(true, 10) // interval
 				.levelChange(false, 20)
@@ -155,13 +209,13 @@ namespace driver_csharp
 				.levelChange(true, 130)
 				.levelChange(false, 140); // 1
 
-			State state2 = new TriggerState(transitions(printMessage, null));
+			State state2 = transmission.start();
 			state2.levelChange(true, 0)
 				.levelChange(false, 10) //interval
 				.levelChange(true, 130)	// 0
 				.levelChange(false, 140); // 1
 
-			State state3 = new TriggerState(transitions(printMessage, null));
+			State state3 = transmission.start();
 			state3.levelChange(false, 0)
 				.levelChange(true, 10) //interval
 				.levelChange(false, 140) // 3 + 1023
