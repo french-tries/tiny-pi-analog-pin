@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Immutable;
 
-// interface class
 // testing
 // use concrete gpio
 // use all possible tiny pins
@@ -60,35 +59,35 @@ namespace driver_csharp
 	{
 		public DataState(Func<State, bool, long, State> onSuccess, 
 			long interval, long startTick, int remaining) : 
-			this(onSuccess, interval, startTick, remaining, false, 0)
+			this(onSuccess, interval, startTick, remaining, true, 0)
 		{}
 		public DataState(Func<State, bool, long, State> onSuccess,
-			long interval, long startTick, int remaining, bool ignoreFirst, int value)
+			long interval, long startTick, int remaining, bool keep, int value)
 		{
 			OnSuccess = onSuccess;
 			Interval = interval;
 			StartTick = startTick;
 			Remaining = remaining;
-			IgnoreFirst = ignoreFirst;
+			Keep = keep;
 			Value = value;
 		}
 
 		public DataState With(long? startTick = null,
-			int? remaining = null, bool? ignoreFirst = null, int? value = null) =>
+			int? remaining = null, bool? keep = null, int? value = null) =>
 			new DataState(OnSuccess, Interval, 
-				startTick ?? StartTick, remaining ?? Remaining, false, value ?? Value);
+				startTick ?? StartTick, remaining ?? Remaining, keep ?? Keep, value ?? Value);
 
 		private Func<State, bool, long, State> OnSuccess { get; }
 
 		public long Interval { get; }
 		public long StartTick { get; }
 		public int Remaining { get; }
-		public bool IgnoreFirst { get; }
+		public bool Keep { get; }
 		public int Value { get; }
 
 		public long nextTick(long tick) => (tick - StartTick < Interval) ? Interval : (StartTick + Interval);
 		public int updateValue(bool rising) {
-			if (IgnoreFirst || rising)
+			if (rising)
 				return Value;
 			return Value | 1 << (Remaining-1);
 		}
@@ -100,11 +99,8 @@ namespace driver_csharp
 			if (Remaining <= 0)
 				return this;
 			if (tick - StartTick > Interval/5*4)
-				if (IgnoreFirst)
-					return With(startTick: nextTick(tick), ignoreFirst: false).processBits(rising, tick);
-				else
-					return With(startTick: nextTick(tick), remaining: Remaining-1,
-						value: updateValue(rising)).processBits(rising, tick);
+				return With(startTick: nextTick(tick), remaining: Remaining-1,
+					value: updateValue(rising)).processBits(rising, tick);
 			return this;
 		}
 
@@ -129,12 +125,12 @@ namespace driver_csharp
 					return new IntervalState(transitions(transmission), tick);
 				}
 				case IntervalState i: {
-					(ListeningTransmission next, int count) = transmission.popRemaining();
-					return new DataState(transitions(next), i.getInterval(tick), tick, count, true, 0);
+					return new DataState(transitions(transmission), i.getInterval(tick), tick, 1, false, 0);
 				}
 				case DataState d when !transmission.isDone(): {
 					(ListeningTransmission next, int count) = transmission.popRemaining();
-					return new DataState(transitions(next.addValue(d.Value)),
+
+					return new DataState(transitions(d.Keep ? next.addValue(d.Value) : next),
 						d.Interval, d.StartTick, count).levelChange(rising, tick);
 				}
 				case DataState d when transmission.isDone(): {
