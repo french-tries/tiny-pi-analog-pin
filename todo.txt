@@ -1,0 +1,8 @@
+- testing
+- use concrete gpio
+- use all possible tiny pins
+- ask for value
+- parity
+- error state when data changes at the wrong time
+- reset after error
+- version with fixed clock rate to see how simpler it would be
