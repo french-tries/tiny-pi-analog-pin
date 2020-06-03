@@ -10,8 +10,8 @@ namespace driver_csharp
 
 		static void Main(string[] args)
 		{
-			ListeningTransmission transmission =
-				new ListeningTransmission(printMessage).addData(2).addData(10);
+			TxListener transmission =
+				new TxListener(printMessage).addData(2).addData(10);
 
 			transmission.start()
 				.levelChange(false, 0)
